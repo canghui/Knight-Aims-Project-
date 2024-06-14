@@ -1,0 +1,700 @@
+# Elephant Step Selection and Movement in Kruger National Park
+# Code rewritten by Dr. S. MacFadyen and Modified by Knight Nasirumbi
+setwd("C:/Users/knight/Documents/2024/knight-data2024")
+
+
+
+# Packages installation
+# install.packages('tidyverse')
+# install.packages('survival')
+# install.packages('gganimate')
+# install.packages('spatstat')
+# install.packages('maptools')
+# install.packages("sfheaders")
+# install.packages('amt')
+# install.packages("sfheaders")
+# install.packages('maptools')
+#install.packages('kableExtra')
+#install.packages("pROC")
+#installed.packages('ggplot2')
+
+
+#Load Packages
+library(kableExtra)
+library(terra)
+library(sf)
+library(sfheaders)
+library(lubridate)
+library(zoo)
+library(amt)
+library(raster)
+library(tidyverse)
+library(dplyr)
+library(survival)
+library(pROC)
+library(gganimate)
+library(spatstat)
+library(ggplot2)
+library(geosphere)
+library(purrr)
+
+
+
+
+# PART A: Environmental data preparation
+# Load environmental raster layers and other needed files
+env_stack = rast('envirStack.tif')
+names(env_stack)
+
+
+
+# PART B: Telemetry data preparation
+
+#Load kruger data
+AMAll = read.csv('ele_kruger_2007_to_2009_filtered1.csv')
+str(AMAll)  
+# check if all observations are complete
+all(complete.cases(AMAll))
+AMAll = na.omit(AMAll)
+#str(AMAll) 
+
+AMAll$nameF = as.factor(AMAll$individual.local.identifier)
+AMAll$dateTimeT= as.POSIXct(AMAll$study.local.timestamp, format = "%Y-%m-%d %H:%M", tz = "UTC")
+class(AMAll$individual.local.identifier) 
+head(AMAll)
+
+
+# Assuming 'AMAll' is already loaded as a dataframe
+# Convert dataframe to tibble (amt package uses tibble), and make track
+AMAll_tb = tibble(AMAll)
+head(AMAll)
+head(AMAll_tb)
+
+
+list_track = list()
+for(i in unique(AMAll$nameF)){
+  trk = make_track(AMAll[AMAll$nameF==i,], .x=utm.easting, .y=utm.northing, .t=dateTimeT, crs=32736, all_cols=TRUE )
+  list_track[[i]] = trk
+}
+list_track
+class(list_track[[1]])
+summarize_sampling_rate(list_track[[1]])
+class(list_track[[2]])
+summarize_sampling_rate(list_track[[2]])
+
+# create steps from tracks using the function steps ()
+# this function turns the x and y points into steps
+# calculates the step lengths, turn angles and time differences
+list_steps = list()
+for(i in 1:length(list_track)){
+  stp = steps(list_track[[i]],diff_time_units = "hours", all_columns = TRUE )
+  list_steps[[i]] = stp
+}
+head(list_steps[[1]])
+# to check for Nas
+for(i in 1:length(list_steps)){
+  print(colSums(is.na(list_steps[[i]])))
+}
+
+# step selection function require equal sampling time (fixed rate) so we will set our fixed rate here 
+# we use sampling rate of 4 hours  but allowed a tolerance of 30minutes to reduce loss of data
+list_track2 = list()
+for(i in 1:length(list_track)){
+  trk2 = track_resample(list_track[[i]],rate = hours(4),tolerance = minutes(30)) #time interval
+  list_track2[[i]] = trk2
+}
+#summary(list_track2[[1]]);summary(list_track2[[2]]);summary(list_track2[[3]]);summary(list_track2[[4]]);summary(list_track2[[5]]);
+#summary(list_track2[[6]]);summary(list_track2[[7]]);summary(list_track2[[8]]);summary(list_track2[[9]]);summary(list_track2[[10]]);
+#summary(list_track2[[11]]);summary(list_track2[[12]]);summary(list_track2[[13]]);summary(list_track2[[14]])
+
+# visualize track 
+# Loop through each model in list_track2 and plot individually
+for(i in 1:length(list_track2)){
+  par(mfrow=c(1,1))
+  plot(list_track2[[i]], ylab = "LATITUDE (m)", xlab = "LONGITUDE (m)", 
+       main = paste0(unique(list_track2[[i]]$nameF)), col='blue')
+  lines(list_track2[[i]], col='red')
+}
+par(mfrow=c(1,1))
+
+
+# following the requirement of ssf, we take at least 3 relocation in a burst
+list_track3 = list()
+for(i in 1:length(list_track2)){
+  trk3 = filter_min_n_burst(list_track2[[i]], min_n = 3)
+  list_track3[[i]] = trk3
+  print(summarize_sampling_rate(list_track3[[i]]))
+}
+
+list_steps2 = list()
+for(i in 1:length(list_track3)){
+  stp3 = steps_by_burst(list_track3[[i]])
+  list_steps2[[i]] = stp3
+  print(summary(list_steps2[[i]]$sl_))
+}
+# generating available steps
+# to generate random steps, we fit a gamma distribution to the step lengths
+# step length is a  right skewed distribution of positive values
+# fit a von mises distribution to turning angles 
+list_fit = list()
+for(i in 1:length(list_steps2)){
+  fit = fit_distr(list_steps2[[i]]$ta_, "vonmises")
+  list_fit[[i]] = fit
+  print(list_fit[[i]])
+}
+# generate random/available steps
+# function n_control takes the number of available steps to be generated for each used step
+# the random_step function creates additional columns 
+# step_id_ is the strata and 
+# case_ is the binary logical response (case = TRUE (1), control = FALSE(0)) of the response variable
+set.seed(123)
+list_avail = list()
+for(i in 1:length(list_steps2)){
+  avl = random_steps(list_steps2[[i]], n_control = 5)
+  list_avail[[i]] = avl
+  print(list_avail[[i]])
+}
+#View(list_avail[[1]])
+
+
+# include logarithm of step lengths
+# and cosine of turning angle to reduce estimate bias
+for(i in 1:length(list_avail)){
+  list_avail[[i]]$log_sl = log(list_avail[[i]]$sl_)
+  list_avail[[i]]$cos_ta = cos(list_avail[[i]]$ta_)
+  print(summary(list_avail[[i]]))
+}
+
+# subset into used and available steps for any future reference 
+list_used_steps = list()
+list_available_steps = list()
+
+for(i in 1:length(list_avail)){
+  used_steps = list_avail[[i]][list_avail[[i]]$case_=='TRUE',]
+  available_steps = list_avail[[i]][list_avail[[i]]$case_=='FALSE',]
+  list_used_steps[[i]] = used_steps
+  list_available_steps[[i]] = available_steps
+  print(summary(list_used_steps[[i]]))
+  print(summary(list_available_steps[[i]]))
+}
+
+# Assume list_avail is your list of data frames
+names(list_avail) = c("AM105", "AM107", "AM108", "AM110", "AM239", "AM253", "AM254", "AM255",
+                      "AM306", "AM307", "AM308","AM91", "AM93" , "AM99")  # Set names if not already set
+
+# Add a new column to each data frame in the list with its name
+list_avail = lapply(names(list_avail), function(name) {
+  df = list_avail[[name]]
+  df$Source = name  # 'Source' is the new column
+  return(df)
+})
+list_avail
+# Now combine all data frames into one
+AMCombine = do.call('rbind', list_avail)
+# Check the result
+#View(AMCombine)
+#summary(AMCombine) 
+
+#Visualizing  step length 
+step_length <- AMCombine$sl_
+hist(step_length,nclass=100,main = "")
+
+#Visualizing  turning angle
+turning_angles <- AMCombine$ta_
+hist(turning_angles,nclass=100, main = "")
+
+Northing = AMCombine$y1_
+Easting  = AMCombine$x1_
+# The map plot
+plot( Northing~Easting, 
+      col = as.factor(AMCombine$Source), 
+      pch = 20)
+
+
+#///////////////////////////////////////////////////////////////////////////////////
+#////////////////////////////////////////////////////////////////////////////////////  
+
+# PART C:  STEP SELECTION FUNCTION
+
+AM_enviro = read.csv('elephants_enviro_all_steps.csv')
+AM_enviro$ta_ =acos((AM_enviro$cos_ta))
+#View(AM_enviro)
+str(AM_enviro)
+head(AM_enviro)
+names(AM_enviro)
+
+summary(AM_enviro)
+
+# REMOVE REMAINNG NA VALUES
+merged_data = na.omit(AM_enviro)
+head(merged_data)
+str(merged_data)
+#View(merged_data)
+
+# case_ as numeric
+merged_data$case_ = as.integer(merged_data$case_)
+unique(merged_data$nameF)
+
+# conditional logistic regression
+# variable names are written short
+# The clogit function from the survival package is used to fit model
+model.list <- list()
+roc_data_list <- list()
+
+for (i in unique(merged_data$nameF)) {
+  df_subset <- merged_data[merged_data$nameF == i, ]
+  mod <- survival::clogit(case_ ~ dem
+                          + hmi
+                          + pop
+                          + fir
+                          + ndv
+                          + mxt
+                          + mit
+                          + ran
+                          + wtd
+                          + frc
+                          + sl_
+                          + log_sl
+                          + cos_ta
+                          + strata(step_id_), data = df_subset, method = "exact")
+  
+  model.list[[i]] <- mod
+  
+  # Extracting predicted probabilities
+  pred_probs <- predict(mod, type = "lp")
+  
+  # Extracting observed outcome
+  outcome <- df_subset$case_
+  
+  # Calculate ROC and AUC
+  roc_obj <- pROC::roc(outcome, pred_probs)
+  auc <- roc_obj$auc
+  print(summary(mod))
+  print(paste("AUC for", i, ":", auc))
+  
+  # Store ROC data for plotting
+  roc_data_list[[i]] <- roc_obj
+}
+
+# Function to plot individual ROC curves
+plot_individual_roc_curves <- function(roc_data_list) {
+  for (i in names(roc_data_list)) {
+    roc_obj <- roc_data_list[[i]]
+    roc_data <- data.frame(
+      Sensitivity = rev(roc_obj$sensitivities),
+      Specificity = rev(roc_obj$specificities)
+    )
+    
+    # AUC text with four decimal places
+    auc_text <- sprintf("AUC = %.4f", roc_obj$auc)
+    
+    p <- ggplot(roc_data, aes(x = 1 - Specificity, y = Sensitivity)) +
+      geom_line(color = "blue") +
+      geom_abline(linetype = "dashed", color = "grey") +
+      labs(title = paste("ROC Curve for", i),
+           x = "(1 - Specificity)", y = "(Sensitivity)") +
+      theme_minimal() +
+      annotate("text", x = 0.8, y = 0.1, label = auc_text, size = 5, color = "black", hjust = 1)
+    
+    print(p)
+  }
+}
+
+#function to plot ROC curves
+plot_individual_roc_curves(roc_data_list)
+
+# str(model.list,max.level = 1)
+# summary(model.list[[1]]);summary(model.list[[2]]);summary(model.list[[3]])
+# summary(model.list[[4]]);summary(model.list[[5]]);summary(model.list[[6]])
+# summary(model.list[[7]]);summary(model.list[[8]]);summary(model.list[[9]])
+# summary(model.list[[10]]);summary(model.list[[11]]);summary(model.list[[12]])
+# summary(model.list[[13]]);summary(model.list[[14]])
+# 
+
+# model performance
+# AIC of individual model
+# Calculate AIC, BIC, and C-index for each model:
+(aic_values = sapply(model.list, AIC))
+(bic_values = sapply(model.list, BIC))
+(c_index_values = sapply(model.list, function(model) summary(model)$concordance[1]))
+
+model_comparison = data.frame(
+  Model = paste("Model", 1:length(model.list)),
+  AIC = aic_values,
+  BIC = bic_values,
+  Concordance = c_index_values
+)
+model_comparison
+
+# Visualizing Model Comparisons:
+model_comparison$Model = as.factor(row.names(model_comparison))
+
+# Plot AIC, BIC, and Concordance
+# ggplot(model_comparison, aes(x = Model)) +
+#   geom_point(aes(y = AIC, color = "AIC")) +
+#   geom_point(aes(y = BIC, color = "BIC")) +
+#   geom_point(aes(y = Concordance * 10000, color = "Concordance")) +  # Scale concordance for visibility
+#   scale_y_continuous(name = "AIC / BIC / Concordance * 1000", sec.axis = sec_axis(~ . / 1000, name = "Concordance")) +
+#   labs(title = "Model Comparison", x = "Models", y = "AIC / BIC / Concordance * 1000") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   scale_color_manual(name = "Metric", values = c("AIC" = "red", "BIC" = "blue", "Concordance" = "green"))
+
+# Assuming model_comparison is your data frame
+model_comparison = model_comparison %>%
+  arrange(BIC) %>%
+  mutate(Model = factor(Model, levels = Model))
+
+# Plot AIC, BIC, and Concordance
+ggplot(model_comparison, aes(x = Model)) +
+  geom_point(aes(y = AIC, color = "AIC"), size = 3) +
+  geom_point(aes(y = BIC, color = "BIC"), size = 3) +
+  geom_point(aes(y = Concordance * 10000, color = "Concordance"), size = 3) +  # Scale concordance for visibility
+  scale_y_continuous(name = "AIC / BIC", sec.axis = sec_axis(~ . / 10000, name = "Concordance") ) +
+  labs(title = "Model Comparison", x = "Models", y = "AIC / BIC") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position = "bottom") +
+  scale_color_manual(name = "Metric", values = c("AIC" = "red", "BIC" = "blue", "Concordance" = "green")  )
+
+summary(model.list[['AM91']])
+
+# Extract Summary Statistics:
+model_summary_list = lapply(model.list, function(model) {
+  summary_model = summary(model)
+  data.frame(
+    Variable = rownames(summary_model$coefficients),
+    Coefficient = summary_model$coefficients[, "coef"],
+    HR = summary_model$coefficients[, "exp(coef)"],
+    SE = summary_model$coefficients[, "se(coef)"],
+    z = summary_model$coefficients[, "z"],
+    p = summary_model$coefficients[, "Pr(>|z|)"],
+    Model = deparse(substitute(model))
+  )
+})
+
+model_summaries = do.call(rbind, model_summary_list)
+model_summaries
+
+# Summary Table in a Nice Format:
+model_summaries %>%
+  kbl(caption = "Summary of Cox Proportional Hazards Models") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+
+# plot coefficient of models
+# Extract coefficients and p-values
+list_coef = list()
+for(i in 1:length(model.list)){
+  cf = as.data.frame(coef(model.list[[i]]))
+  cf$var = row.names(cf)
+  cf$nameF = names(model.list)[[i]]
+  list_coef[[i]] = cf
+  print(summary(list_coef[[i]]))
+}
+#View(list_coef[[1]])
+#head(list_coef[[1]])
+
+# bar plot  to display the coefficients
+names(list_coef) = c("AM105", "AM107", "AM108", "AM110", "AM239", "AM253", "AM254", "AM255",
+                     "AM306", "AM307", "AM308","AM91", "AM93" , "AM99") 
+
+for(i in 1:length(list_coef)){
+  # layout to a single plot
+  par(mfrow=c(1,1))
+# Generating distinct colors for each bar
+  colors <- rainbow(length(list_coef[[i]][,1]))
+# Create barplot for each model
+  barplot(list_coef[[i]][,1], 
+          main=paste0("Effect Size: ",names(list_coef)[[i]]),
+          xlab="Exposure Variables", 
+          ylab="Coefficient Value", 
+          col=colors)
+# Adding labels to bars
+  text(x = 1:length(list_coef[[i]][,1]), 
+       y = list_coef[[i]][,1], 
+       label = rownames(list_coef[[i]]), 
+       pos = 4, 
+       cex = 1, 
+       col = "blue")
+}
+
+# Now combine all data frames into one
+coef_df = do.call('rbind', list_coef)
+names(coef_df) = c('coefs','var','nameF')
+coef_df
+#View(coef_df)
+#table(coef_df)
+
+
+
+
+# Appendix D: AGENT BASED MODELLING 
+
+# ==============================================================================
+# load environmental raster layers and other needed files
+env_stack = rast('envirStack.tif')
+names(env_stack)
+
+# get the extent of the zones raster as extent of area of interest
+aoi_ext = ext(env_stack[[1]])
+
+# load data used for fitting step selection function
+# the predict function uses the data in the clogit model to forecast for future steps using the same set of environmental variables
+steps_all = merged_data
+head(steps_all)  
+str(steps_all)
+
+# step_id_  is the stratum number of grouped data
+steps_all$step_id_ = as.factor(steps_all$step_id_)
+names(steps_all)
+names(env_stack)
+
+# Check projections are the same
+steps_all_sf = st_as_sf(steps_all, coords = c("x", "y"), crs = 4326)
+plot(env_stack[[1]])
+points(steps_all_sf[steps_all_sf$nameF=='AM91',], pch=20)
+
+# Projection to meters using UTM36S
+steps_all_sf_utm = st_transform(steps_all_sf, crs = 32736)
+env_stack_utm = project(env_stack, 'EPSG:32736')
+
+steps_all_sf_utm$x = st_coordinates(steps_all_sf_utm$geometry)[,1]
+steps_all_sf_utm$y = st_coordinates(steps_all_sf_utm$geometry)[,2]
+steps_all_sf_utm.df = as.data.frame(steps_all_sf_utm)
+head(steps_all_sf_utm.df)
+
+steps_all = steps_all_sf_utm.df
+env_stack = env_stack_utm
+
+#write.csv(steps_all,'steps_all_final.csv')
+#View(steps_all)
+#writeRaster(env_stack,'env_stack_final.tif',overwrite = TRUE)
+
+
+steps_all = (read.csv('steps_all_final.csv'))
+#View(steps_all)
+
+#Renaming the columns in a correct way
+colnames(steps_all) <-c("X","dateTime", "nameF",   
+                        "case_" ,"step_id_","sl_","log_sl",  
+                        "cos_ta","dem","hmi","pop","fir",     
+                        "mit","mxt","ndv","ran",     
+                        "wtd", "frc","ta_","c","geometry",
+                        "x","y")
+
+#View(steps_all)
+#unique(steps_all$nameF)
+
+env_stack = rast('env_stack_final.tif')[[c(1:3, 5:10)]]
+aoi_ext = ext(env_stack[[1]])
+
+# Initialize a data frame structure
+df.str = steps_all[1,c('case_','dem','hmi','pop','mit','mxt','ndv','ran','wtd','frc',
+                       
+                       'sl_','log_sl','cos_ta','step_id_')]
+df.str = df.str[-1,]
+
+# Initialize a data frame to store the paths of simulated movements
+paths_df = data.frame(agentID = numeric(),
+                      x = numeric(),
+                      y = numeric(),
+                      stepID = integer(),
+                      point_type = character(),
+                      stringsAsFactors = FALSE)
+
+# Function to extract environmental values from raster stack
+get_environmental_values = function (x, y, raster_stack) {
+  values = terra::extract(raster_stack, cbind(x, y))
+  values_vector = setNames(as.numeric(values), names(values))
+  return(values_vector)
+}
+# Predefine the 8 compass directions in radians
+compass_directions = c(0, pi/4, pi/2, 3*pi/4, pi, 5*pi/4, 3*pi/2, 7*pi/4)
+
+# Function to calculate a new point from step length and turning angle
+calculate_new_point = function(x, y, sl_, ta_, extent) {
+  repeat {
+    new_x = x + (sl_ * cos(ta_))  # Calculate new x coordinate
+    new_y = y + (sl_ * sin(ta_))  # Calculate new y coordinate
+    # Check if the new point is within the extent bounds
+    if (new_x >= extent[1] && new_x <= extent[2] && new_y >= extent[3] && new_y <= extent[4]) {
+      return(c(new_x, new_y))
+    } else {
+      # If outside bounds, randomly adjust the ta_ to one of the 8 compass directions
+      ta_ = sample(compass_directions, 1)
+      }
+  }
+}
+#Number of agent to simulate
+agent_no = 5
+
+# List of animal to be involve in the simulation
+
+(animalIDs = unique(steps_all$nameF))
+(animalIDs = c('AM91','AM107','AM99','AM306'))
+path.list = list()
+
+# Function to simulate paths based on model results for each animal
+for (animal in animalIDs) {
+    # Initialize paths_df as an empty data frame for each animal  
+  paths_df = data.frame()  
+  # Simulate paths for each agent
+  for (t in 1:agent_no) {
+    steps = steps_all[steps_all$nameF %in% animal, ]
+    ipt = data.frame(init_x = sample(steps$x, 1), init_y = sample(steps$y, 1))
+    current_x = ipt$init_x
+    current_y = ipt$init_y
+    # Add the initial point to the paths data frame
+    paths_df = rbind(paths_df, data.frame(agentID = t,
+                                          x = current_x,
+                                          y = current_y,
+                                          stepID = 0,
+                                          point_type = 'initial',
+                                          ta_ = NA,
+                                          nameF = paste0(animal)))
+# Simulate movements
+    for (i in 1:100) {
+      # Sample 5 random steps as potential next moves
+      steps_df = steps[sample(seq_len(nrow(steps)), 5, replace = TRUE), c("sl_", "ta_", "step_id_")]
+      # Initialize the dataframe for potential points
+      potential_points = df.str
+      for (j in 1:5) {
+        # Select a random compass direction
+        ta_ = sample(compass_directions, 1)
+        new_point = calculate_new_point(current_x,
+                                        current_y,
+                                        steps_df$sl_[j],
+                                        ta_, aoi_ext)
+        env_values = get_environmental_values(new_point[1],
+                                              new_point[2], env_stack)
+        # If any environmental values are NA, discard the new point
+        if (any(is.na(env_values))) {
+          next
+        }
+        
+       # Add the new point and its environmental values to the potential_points data frame
+        potential_points[j, c("x", "y")] = new_point
+        potential_points[j, names(env_stack)] = env_values 
+        potential_points[j, 'sl_'] = steps_df$sl_[j]
+        potential_points[j, 'log_sl'] = log(steps_df$sl_[j])
+        potential_points[j, 'cos_ta'] = cos(ta_)
+        potential_points[j, 'step_id_'] = steps_df$step_id_[j]
+        potential_points[j, 'case_'] = 1
+        potential_points[j, 'ta_'] = ta_  # Add ta_ to potential_points
+        
+      }
+      
+      # Drop any rows where environmental values are NA
+      potential_points = potential_points[rowSums(is.na(potential_points)) == 0,]
+      
+      # Check if potential_points is empty
+      
+      if (nrow(potential_points) == 0) {
+        print(paste("No valid potential points for agent", t, "at step", i))
+        next
+        
+      }
+      # Predict the log odds of each new point being case_
+      mod = survival::clogit(case_ ~ dem + hmi + pop + ndv + mxt + mit + ran + wtd + frc +
+                               sl_ + log_sl + cos_ta + strata(step_id_),
+                             data = steps, method = "exact")
+      log_odds = predict(mod, newdata = potential_points, type = 'lp')
+      # Convert log odds to probabilities using the logistic function
+      probabilities = exp(log_odds) / (1 + exp(log_odds))
+      # Choose the next step based on the highest probability
+      best_point_index = which.max(probabilities)
+      best_point = potential_points[best_point_index,]
+      # Update current point
+      current_x = best_point$x
+      current_y = best_point$y
+      # Add the new point to the paths data frame, including the turning angle
+      paths_df = rbind(paths_df, data.frame(agentID = t,
+                                            x = current_x,
+                                            y = current_y,
+                                            stepID = i,
+                                            point_type = 'current',
+                                            ta_ = best_point$ta_,
+                                            nameF = paste0(animal)))
+      # Debugging prints
+      # print(paste("Agent", t, "Step", i, "TA", best_point$ta_, "New Point", current_x, current_y))
+      
+    }
+    
+  }
+  
+  # Display the paths dataframe
+  print(head(paths_df))
+  # Store the paths dataframe in the path.list for each animal
+  path.list[[animal]] = paths_df
+  
+}
+
+# Check list before appending into single data.frame
+names(path.list)
+str(path.list, max.level = 1)
+
+# Create a combined data frame with the nameF column
+paths_all_df = path.list %>%
+  imap(~ .x %>% mutate(nameF = .y)) %>%
+  bind_rows()
+
+head(paths_all_df)
+View(paths_all_df)
+
+# Create the plot object
+paths_all_sf = st_as_sf(paths_all_df, coords = c("x", "y"), crs = 32736)
+plot(env_stack$dem)
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM306',], pch=20, col='green')
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM99',], pch=20, col='cornflowerblue')
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM107',], pch=20, col='grey')
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM91',], pch=20, col='red')
+
+
+points(paths_all_sf[paths_all_sf$nameF=='AM306',], pch=20, col='darkgreen')
+points(paths_all_sf[paths_all_sf$nameF=='AM99',], pch=20, col='blue')
+points(paths_all_sf[paths_all_sf$nameF=='AM107',], pch=20, col='black')
+points(paths_all_sf[paths_all_sf$nameF=='AM91',], pch=20, col='darkred')
+
+
+lines(paths_all_sf[paths_all_sf$nameF=='AM306',], lwd=0.5, lty=1, col='darkgreen')
+lines(paths_all_sf[paths_all_sf$nameF=='AM99',], lwd=0.5, lty=1, col='blue')
+lines(paths_all_sf[paths_all_sf$nameF=='AM107',], lwd=0.5, lty=1, col='black')
+lines(paths_all_sf[paths_all_sf$nameF=='AM91',], lwd=0.5, lty=1, col='darkred')
+
+
+# Create the plot object
+paths_all_sf = st_as_sf(paths_all_df, coords = c("x", "y"), crs = 32736)
+plot(env_stack$dem)
+
+# Add points
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM306',], pch=20, col='green')
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM99',], pch=20, col='cornflowerblue')
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM107',], pch=20, col='grey')
+points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM91',], pch=20, col='red')
+
+points(paths_all_sf[paths_all_sf$nameF=='AM306',], pch=20, col='darkgreen')
+points(paths_all_sf[paths_all_sf$nameF=='AM99',], pch=20, col='blue')
+points(paths_all_sf[paths_all_sf$nameF=='AM107',], pch=20, col='black')
+points(paths_all_sf[paths_all_sf$nameF=='AM91',], pch=20, col='darkred')
+
+# Add lines
+lines(paths_all_sf[paths_all_sf$nameF=='AM306',], lwd=0.5, lty=1, col='darkgreen')
+lines(paths_all_sf[paths_all_sf$nameF=='AM99',], lwd=0.5, lty=1, col='blue')
+lines(paths_all_sf[paths_all_sf$nameF=='AM107',], lwd=0.5, lty=1, col='black')
+lines(paths_all_sf[paths_all_sf$nameF=='AM91',], lwd=0.5, lty=1, col='darkred')
+
+# Add the legend
+legend("bottomright", 
+       legend = c("AM306", "AM99", "AM107", "AM91"),
+       col = c("green", "cornflowerblue", "grey", "red"),
+       pch = 20, 
+       pt.cex = 2,
+       bty = "n")
+
+
+
+(green dot)- AM306
+(cornflowerblue dot)-AM99
+(grey dot)-AM107
+(red dot)-AM91
+

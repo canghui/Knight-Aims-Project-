@@ -211,7 +211,6 @@ plot( Northing~Easting,
       pch = 20)
 
 
-#///////////////////////////////////////////////////////////////////////////////////
 #////////////////////////////////////////////////////////////////////////////////////  
 
 # PART C:  STEP SELECTION FUNCTION
@@ -426,11 +425,10 @@ coef_df
 #table(coef_df)
 
 
-
+%//////////////////////////////////////////////////////////////////////////////
 
 # Appendix D: AGENT BASED MODELLING 
 
-# ==============================================================================
 # load environmental raster layers and other needed files
 env_stack = rast('envirStack.tif')
 names(env_stack)
@@ -662,39 +660,9 @@ lines(paths_all_sf[paths_all_sf$nameF=='AM107',], lwd=0.5, lty=1, col='black')
 lines(paths_all_sf[paths_all_sf$nameF=='AM91',], lwd=0.5, lty=1, col='darkred')
 
 
-# Create the plot object
-paths_all_sf = st_as_sf(paths_all_df, coords = c("x", "y"), crs = 32736)
-plot(env_stack$dem)
-
-# Add points
-points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM306',], pch=20, col='green')
-points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM99',], pch=20, col='cornflowerblue')
-points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM107',], pch=20, col='grey')
-points(steps_all_sf_utm[steps_all_sf_utm$nameF=='AM91',], pch=20, col='red')
-
-points(paths_all_sf[paths_all_sf$nameF=='AM306',], pch=20, col='darkgreen')
-points(paths_all_sf[paths_all_sf$nameF=='AM99',], pch=20, col='blue')
-points(paths_all_sf[paths_all_sf$nameF=='AM107',], pch=20, col='black')
-points(paths_all_sf[paths_all_sf$nameF=='AM91',], pch=20, col='darkred')
-
-# Add lines
-lines(paths_all_sf[paths_all_sf$nameF=='AM306',], lwd=0.5, lty=1, col='darkgreen')
-lines(paths_all_sf[paths_all_sf$nameF=='AM99',], lwd=0.5, lty=1, col='blue')
-lines(paths_all_sf[paths_all_sf$nameF=='AM107',], lwd=0.5, lty=1, col='black')
-lines(paths_all_sf[paths_all_sf$nameF=='AM91',], lwd=0.5, lty=1, col='darkred')
-
-# Add the legend
-legend("bottomright", 
-       legend = c("AM306", "AM99", "AM107", "AM91"),
-       col = c("green", "cornflowerblue", "grey", "red"),
-       pch = 20, 
-       pt.cex = 2,
-       bty = "n")
 
 
 
-(green dot)- AM306
-(cornflowerblue dot)-AM99
-(grey dot)-AM107
-(red dot)-AM91
+
+
 

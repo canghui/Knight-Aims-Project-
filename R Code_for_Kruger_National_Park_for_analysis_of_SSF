@@ -1,5 +1,5 @@
 # Elephant Step Selection and Movement in Kruger National Park
-# Code rewritten by Dr. S. MacFadyen and Modified by Knight Nasirumbi
+# Code rewritten by Dr. S. MacFadyen, Modified by Knight Nasirumbi, Supervised by Prof. Cang Hui.
 setwd("C:/Users/knight/Documents/2024/knight-data2024")
 
 
@@ -91,12 +91,12 @@ for(i in 1:length(list_track)){
   list_steps[[i]] = stp
 }
 head(list_steps[[1]])
-# to check for Nas
+# to check for missing (Nas)
 for(i in 1:length(list_steps)){
   print(colSums(is.na(list_steps[[i]])))
 }
 
-# step selection function require equal sampling time (fixed rate) so we will set our fixed rate here 
+# step selection function require equal sampling time (fixed rate). 
 # we use sampling rate of 4 hours  but allowed a tolerance of 30minutes to reduce loss of data
 list_track2 = list()
 for(i in 1:length(list_track)){
@@ -203,9 +203,9 @@ hist(step_length,nclass=100,main = "")
 turning_angles <- AMCombine$ta_
 hist(turning_angles,nclass=100, main = "")
 
+# visualize distribution steps of elephants, the map plot
 Northing = AMCombine$y1_
 Easting  = AMCombine$x1_
-# The map plot
 plot( Northing~Easting, 
       col = as.factor(AMCombine$Source), 
       pch = 20)
@@ -638,6 +638,7 @@ paths_all_df = path.list %>%
 
 head(paths_all_df)
 View(paths_all_df)
+write.csv(paths_all_df,'paths_df_agents_5.csv')
 
 # Create the plot object
 paths_all_sf = st_as_sf(paths_all_df, coords = c("x", "y"), crs = 32736)
@@ -659,6 +660,13 @@ lines(paths_all_sf[paths_all_sf$nameF=='AM99',], lwd=0.5, lty=1, col='blue')
 lines(paths_all_sf[paths_all_sf$nameF=='AM107',], lwd=0.5, lty=1, col='black')
 lines(paths_all_sf[paths_all_sf$nameF=='AM91',], lwd=0.5, lty=1, col='darkred')
 
+#Add the legend
+legend("topright", inset=c(-0.000,0), xpd=TRUE, 
+       legend=c("AM306 Steps", "AM99 Steps", "AM107 Steps", "AM91 Steps", 
+                "AM306 Path", "AM99 Path", "AM107 Path", "AM91 Path"),
+       col=c('green', 'cornflowerblue', 'grey', 'red', 
+             'darkgreen', 'blue', 'black', 'darkred'),
+       pch=20, lty=c(NA,NA,NA,NA,1,1,1,1), lwd=0.5)
 
 
 
